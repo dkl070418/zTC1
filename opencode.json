@@ -1,0 +1,19 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "Cherry-p_c01be0": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Cherry-p_c01be0",
+      "options": {
+        "apiKey": "{env:OPENCODE_API_KEY_P_C01BE0}",
+        "baseURL": "https://api.bankofai.io/v1"
+      },
+      "models": {
+        "qwen3.8-flash": {
+          "name": "qwen3.8-flash",
+          "reasoning": true
+        }
+      }
+    }
+  }
+}

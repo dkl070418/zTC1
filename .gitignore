@@ -1,0 +1,32 @@
+.vs
+~*
+build
+zTC1.*
+*.rar
+
+# project-local build toolchain (see env\setup.ps1)
+env/dl
+env/python27
+env/cache
+env/home
+
+# ---- vendored MiCO SDK: 1.18GB, 全部不入库 ----
+mico-os/*
+# 例外：本项目唯一改动过的 vendored 文件所在目录，必须纳入版本管理
+!mico-os/libraries/
+mico-os/libraries/*
+!mico-os/libraries/protocols/
+mico-os/libraries/protocols/*
+!mico-os/libraries/protocols/mqtt/
+
+# ---- 构建产物 / 大文件 ----
+release/*.bin
+TC1/http_server/web_data.c
+doc/*.png
+doc/*.jpg
+doc/*.jpeg
+
+# ---- 编辑器 / 系统 ----
+*.o
+*.d
+*.elf.map
