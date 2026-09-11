@@ -14,6 +14,7 @@
 #include "http_server/web_log.h"
 #include "mqtt_server/user_mqtt_client.h"
 #include "timed_task/timed_task.h"
+#include "udp_server/user_udp_discover.h"
 
 char rtc_init = 0; //sntp校时成功标志位
 uint32_t total_time = 0;
@@ -219,6 +220,7 @@ int application_start(void) {
     require_noerr(err, exit);
     PowerInit();
     AppHttpdStart(); // start http server thread
+    UdpDiscoverInit(); /* ZControl 局域网发现：10182 应答 device report */
 
     UserLedSet(user_config->power_led_enabled);
 
