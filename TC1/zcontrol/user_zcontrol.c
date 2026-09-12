@@ -98,7 +98,8 @@ int ZcBuildStateJson(char *buf, int buflen)
     mac_lc[12] = 0;
 
     n = snprintf(buf, (size_t) buflen,
-                 "{\"mac\":\"%s\",\"version\":\"%s\",\"lock\":0,\"child_lock\":%d,\"led_lock\":%d,"
+                 /* V1 激活码 DRM 在 V2 无意义；恒报已激活，避免 ZControl 一直显示「未激活」 */
+                 "{\"mac\":\"%s\",\"version\":\"%s\",\"lock\":true,\"child_lock\":%d,\"led_lock\":%d,"
                  "\"power\":\"%.1f\",\"total_time\":%lu",
                  mac_lc, VERSION, childLockEnabled ? 1 : 0,
                  user_config->power_led_enabled ? 1 : 0,
