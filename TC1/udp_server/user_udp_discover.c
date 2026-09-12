@@ -11,6 +11,7 @@
 #include "main.h"
 #include "user_wifi.h"
 #include "user_udp_discover.h"
+#include "zcontrol/user_zcontrol.h"
 #include "http_server/web_log.h"
 
 #include "mico_rtos.h"
@@ -20,8 +21,9 @@
 #include <string.h>
 #include <stdio.h>
 
-#define UDP_RECV_MAX 256
-#define UDP_SEND_MAX 200
+/* RefreshStatus 查询 JSON 约 400B，控制包更短 */
+#define UDP_RECV_MAX 768
+#define UDP_SEND_MAX 1024
 
 static volatile bool udp_disc_should_exit = false;
 static volatile bool udp_disc_running = false;
@@ -172,8 +174,26 @@ static void UdpDiscoverThread(mico_thread_arg_t arg)
         }
         if (ret == 0) continue;
 
+        recv_buf[ret] = 0;
+
         if (UdpDiscIsReport(recv_buf, ret)) {
             UdpDiscSendReport(fd, &from);
+        } else if (ZcHandleCommand(recv_buf)) {
+            /* ZControl 控制/查询：单播回 10181 */
+            static char state[UDP_SEND_MAX];
+            struct sockaddr_in to;
+            int n, len;
+
+            n = ZcBuildStateJson(state, (int) sizeof(state));
+            if (n > 0) {
+                memset(&to, 0, sizeof(to));
+                to.sin_family = AF_INET;
+                to.sin_port = htons(UDP_DISCOVER_PEER_PORT);
+                to.sin_addr = from.sin_addr;
+                len = (int) sendto(fd, state, (size_t) n, 0,
+                                   (struct sockaddr *) &to, sizeof(to));
+                udp_log("UDP ZC reply len=%d/%d", len, n);
+            }
         }
     }
 

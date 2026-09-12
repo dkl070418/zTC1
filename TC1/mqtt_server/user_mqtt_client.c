@@ -26,6 +26,7 @@
 #include "user_gpio.h"
 #include "user_power.h"
 #include "user_mqtt_client.h"
+#include "zcontrol/user_zcontrol.h"
 
 typedef struct {
     char topic[MAX_MQTT_TOPIC_SIZE];
@@ -66,6 +67,7 @@ static volatile bool mqtt_worker_running = false;
 
 char topic_state[MAX_MQTT_TOPIC_SIZE];
 char topic_set[MAX_MQTT_TOPIC_SIZE];
+static char topic_zc_set[MAX_MQTT_TOPIC_SIZE];
 char topic_availability[MAX_MQTT_TOPIC_SIZE];
 
 mico_timer_t timer_handle;
@@ -173,6 +175,7 @@ OSStatus UserMqttInit(void) {
 
     sprintf(topic_set, MQTT_CLIENT_SUB_TOPIC1);
     sprintf(topic_state, MQTT_CLIENT_PUB_TOPIC, str_mac);
+    snprintf(topic_zc_set, sizeof(topic_zc_set), MQTT_CLIENT_ZC_SET_FMT, str_mac);
 
     /* 队列一旦建立就常驻，不随线程销毁：其它线程可能正在往里投递消息 */
     if (mqtt_msg_send_queue == NULL) {
@@ -405,6 +408,15 @@ static void MqttClientThread(mico_thread_arg_t arg) {
     rc = MQTTSubscribe(&c, topic_set, QOS0, MessageArrived);
     require_noerr_string(rc, MQTT_reconnect, "ERROR: MQTT client subscribe err.");mqtt_log(
             "MQTT client subscribe success! recv_topic=[%s].", topic_set);
+    /* ZControl：device/ztc1/<mac>/set 也收一份 */
+    if (topic_zc_set[0] != 0) {
+        rc = MQTTSubscribe(&c, topic_zc_set, QOS0, MessageArrived);
+        if (rc == MQTT_SUCCESS) {
+            mqtt_log("MQTT zcontrol subscribe success! recv_topic=[%s].", topic_zc_set);
+        } else {
+            mqtt_log("WARN: zcontrol subscribe fail rc=%d", rc);
+        }
+    }
     /*4.1 连接成功后先更新一次数据*/
     isconnect = true;
 
@@ -602,9 +614,16 @@ OSStatus UserRecvHandler(void *arg) {
 
     mqtt_log("user get data success! from_topic=[%s], msg=[%ld].", p_recv_msg->topic,
              p_recv_msg->datalen);
-    //UserFunctionCmdReceived(0, p_recv_msg->data);
 
-    ProcessHaCmd(p_recv_msg->data);
+    /* ZControl JSON 与 HA 文本命令分叉；两边改完都同步 JSON 状态 */
+    if (p_recv_msg->data[0] == '{') {
+        if (ZcHandleCommand(p_recv_msg->data)) {
+            ZcPublishState();
+        }
+    } else {
+        ProcessHaCmd(p_recv_msg->data);
+        ZcPublishState();
+    }
 
     free(p_recv_msg);
 

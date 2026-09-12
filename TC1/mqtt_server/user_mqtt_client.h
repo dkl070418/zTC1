@@ -7,6 +7,8 @@
 #define MQTT_CLIENT_KEEPALIVE   30
 #define MQTT_CLIENT_SUB_TOPIC1  "device/ztc1/set"
 #define MQTT_CLIENT_PUB_TOPIC   "device/ztc1/%s/state"
+/* ZControl 按 MAC 订阅的控制主题 */
+#define MQTT_CLIENT_ZC_SET_FMT  "device/ztc1/%s/set"
 /* 遗嘱/在线状态主题。LWT 断联时 broker 自动发 "offline"，
  * 前端和 HA 据此把 UI 置灰，区分"设备离线"和"命令丢了"。 */
 #define MQTT_CLIENT_AVAIL_TOPIC "device/ztc1/%s/availability"
@@ -39,6 +41,9 @@ extern OSStatus UserMqttDeInit(void);
 extern OSStatus UserMqttDeInitWait(void);
 
 extern OSStatus UserMqttSend(char *arg);
+
+/* device/ztc1/<mac>/state —— ZControl 状态主题（UserMqttInit 时填充） */
+extern char topic_state[MAX_MQTT_TOPIC_SIZE];
 
 extern bool UserMqttIsConnect(void);
 
