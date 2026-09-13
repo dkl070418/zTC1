@@ -61,14 +61,40 @@ bool AddTaskSingle(pTimedTask task)
     return false;
 }
 
+/* day: 1=周一 ... 7=周日；weekday 模式 9=工作日 10=周末 */
+static bool WeekdayModeMatch(int mode, int day)
+{
+    if (mode == 9) return day >= 1 && day <= 5;
+    if (mode == 10) return day >= 6 && day <= 7;
+    return false;
+}
+
 bool AddTaskWeek(pTimedTask task)
 {
     time_t now = time(NULL);
     int today_weekday = (now / day_sec + 3) % 7 + 1; //1970-01-01 星期五
-    int next_day = task->weekday - today_weekday;
-    bool next_day_is_today = next_day == 0 && task->prs_time % day_sec > now % day_sec;
-    next_day = next_day > 0 || next_day_is_today ? next_day : next_day + 7;
-    task->prs_time = (now - now % day_sec) + (next_day * day_sec) + task->prs_time % day_sec;
+    int tod = (int) (now % day_sec);
+    int hit_sec = (int) (task->prs_time % day_sec);
+    int offset;
+
+    if (task->weekday == 9 || task->weekday == 10) {
+        /* 工作日/周末：从今天起找最近一个匹配日的 hit_sec */
+        for (offset = 0; offset < 7; offset++) {
+            int day = ((today_weekday - 1 + offset) % 7) + 1;
+            if (!WeekdayModeMatch(task->weekday, day)) continue;
+            if (offset == 0 && hit_sec <= tod) continue;
+            task->prs_time = (now - now % day_sec) + (offset * day_sec) + hit_sec;
+            return AddTaskSingle(task);
+        }
+        return false;
+    }
+
+    {
+        int next_day = task->weekday - today_weekday;
+        bool next_day_is_today = next_day == 0 && hit_sec > tod;
+        next_day = next_day > 0 || next_day_is_today ? next_day : next_day + 7;
+        task->prs_time = (now - now % day_sec) + (next_day * day_sec) + hit_sec;
+    }
 
     return AddTaskSingle(task);
 }
@@ -93,6 +119,12 @@ bool DelFirstTask()
         }
         else if (tmp->weekday == 8) //8代表每日任务
         {
+            tmp->prs_time += day_sec;
+            AddTask(tmp);
+        }
+        else if (tmp->weekday == 9 || tmp->weekday == 10)
+        {
+            /* 先 +1 天再由 AddTaskWeek 吸附到下一个工作日/周末 */
             tmp->prs_time += day_sec;
             AddTask(tmp);
         }

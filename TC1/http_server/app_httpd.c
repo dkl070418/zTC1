@@ -913,7 +913,8 @@ static int HttpAddTask(httpd_request_t *req) {
     OSStatus err = kNoErr;
 
     //1577369623 4 0
-    char buf[20] = {0};
+    /* weekday 可到 10（周末），20 字节刚好够 "ts op on 10" */
+    char buf[24] = {0};
     err = httpd_get_data(req, buf, 20);
     require_noerr(err, exit);
 
@@ -930,7 +931,7 @@ static int HttpAddTask(httpd_request_t *req) {
     if (task->prs_time < 1577428136 || task->prs_time > 9577428136
         || task->operation < 0 || task->operation > 11
         || task->on < -1 || task->on > 1
-        || task->weekday < 0 || task->weekday > 8) { http_log("AddTask Error!");
+        || task->weekday < 0 || task->weekday > 10) { http_log("AddTask Error!");
         re = 0;
     }
 

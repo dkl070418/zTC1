@@ -9,7 +9,8 @@ struct TimedTask
     time_t prs_time; //被执行的格林尼治时间戳
     int operation;  //要进行的操作
     int on;          //开或者关，或者其他操作
-    int weekday;     //星期重复 0代表不重复 8代表每日重复
+    /* 0不重复 1-7每周固定日 8每天 9工作日(一~五) 10周末(六~日) */
+    int weekday;
     pTimedTask next; //下一个任务(按之间排序)
 };
 

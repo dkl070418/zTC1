@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="en">
 <head>
     <meta charset="utf-8">
@@ -522,6 +522,8 @@
                                     无循环
                                 </li>
                                 <li class="mdl-menu__item" data-val="8">每天</li>
+                                <li class="mdl-menu__item" data-val="9">工作日(一~五)</li>
+                                <li class="mdl-menu__item" data-val="10">周末(六~日)</li>
                                 <li class="mdl-menu__item" data-val="1">星期一</li>
                                 <li class="mdl-menu__item" data-val="2">星期二</li>
                                 <li class="mdl-menu__item" data-val="3">星期三</li>
@@ -1502,6 +1504,10 @@ componentHandler.upgradeDom();
     return '每周日';
         case 8:
     return '每天';
+        case 9:
+    return '工作日';
+        case 10:
+    return '周末';
     }
     }
 
