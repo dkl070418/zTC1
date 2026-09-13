@@ -1,5 +1,6 @@
 #pragma once
 #include <time.h>
+#include <stdbool.h>
 
 struct TimedTask;
 typedef struct TimedTask* pTimedTask;
@@ -14,9 +15,12 @@ struct TimedTask
     pTimedTask next; //下一个任务(按之间排序)
 };
 
+void TaskSubsysInit(void);
 pTimedTask NewTask();
 bool AddTask(pTimedTask task);
 bool DelTask(int time);
+/* 按 timed_tasks[] 槽位下标删除（稳定唯一，不随时间戳变） */
+bool DelTaskById(int id);
 bool DelFirstTask();
 void ProcessTask();
 char* GetTaskStr();

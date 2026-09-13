@@ -219,6 +219,7 @@ int application_start(void) {
     err = UserRtcInit();
     require_noerr(err, exit);
     PowerInit();
+    TaskSubsysInit();
     AppHttpdStart(); // start http server thread
     UdpDiscoverInit(); /* ZControl 局域网发现：10182 应答 device report */
 

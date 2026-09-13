@@ -965,7 +965,8 @@ static int HttpDelTask(httpd_request_t *req) {
     int time1;
     sscanf(time_str + 6, "%d", &time1);
 
-    char *mess = DelTask(time1) ? "OK" : "NO";
+    /* /task/<n> 的 n 现为槽位 id（GetTaskStr 的 id 字段），不再用时间戳 */
+    char *mess = DelTaskById(time1) ? "OK" : "NO";
 
     send_http(mess, strlen(mess), exit, &err);
     exit:

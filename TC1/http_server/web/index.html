@@ -952,6 +952,9 @@
       $(".mdl-navigation__link").removeClass("mdl-nav-active");
       $(".mdl-navigation__link:eq("+(id-1)+")").addClass("mdl-nav-active");
 
+      if(id == 3) {
+        GetTimedTask();
+      }
       if(id == 2) {
         Rescan();
         $("#custom_password")[0].parentElement.MaterialTextfield.change(info_wifi_password);
@@ -971,7 +974,14 @@
     var socket_ul = document.getElementById("socket_ul");
     var checkboxs = socket_ul.getElementsByClassName("mdl-switch__input");
     var switch_lables = socket_ul.getElementsByClassName("mdl-switch");
-
+    /* 本地刚点过开关时，暂时忽略 /power 里还在路上的旧状态，避免 UI 被“弹回去” */
+    var ui_apply_lock_until = 0;
+    function LockUiApply(ms) {
+      ui_apply_lock_until = Date.now() + (ms || 2500);
+    }
+    function UiApplyLocked() {
+      return Date.now() < ui_apply_lock_until;
+    }
 
     HttpGet("/status", function (re) {
       var status = JSON.parse(re);
@@ -1107,11 +1117,14 @@ componentHandler.upgradeDom();
     if("list-switch-all" == this.id||"list-switch-child-lock"== this.id||"task_on"== this.id){
     return;
     }
+      LockUiApply(3000);
       var sockets_st = "";
       for (var i = 3; i < checkboxs.length; i++) {
         sockets_st += (checkboxs[i].checked ? "1," : "0,");
       }
       HttpPost("/socket", function (re) {
+        /* 设备已写入后再锁短一点，下一轮 /power 自然对齐 */
+        LockUiApply(800);
       }, sockets_st);
         HttpPost("/led", function (re) {
       }, checkboxs[1].checked ? "1" : "0");
@@ -1173,11 +1186,15 @@ componentHandler.upgradeDom();
   });
 
     document.getElementById("list-switch-all").addEventListener("click", function() {
+     LockUiApply(3000);
      HttpPost("/socketAll", function (re) {
+       LockUiApply(800);
       }, checkboxs[2].checked ? "1" : "0");});
 
           document.getElementById("list-switch-child-lock").addEventListener("click", function() {
+     LockUiApply(3000);
      HttpPost("/childLock", function (re) {
+       LockUiApply(800);
       }, checkboxs[0].checked ? "1" : "0");});
 
     //Socket-end
@@ -1343,32 +1360,34 @@ componentHandler.upgradeDom();
         w_t.innerHTML = w_v_t.toFixed(3);
         var w_v_y = to_kwh(power.p_count_1_day_ago - power.p_count_2_days_ago);
         w_y.innerHTML = w_v_y.toFixed(3);
-        if (power.child_lock_enabled == 1) {
+        if (!UiApplyLocked()) {
+          if (power.child_lock_enabled == 1) {
             switch_lables[0].MaterialSwitch.on();
           } else {
             switch_lables[0].MaterialSwitch.off();
           }
-    if (power.led_enabled == 1) {
+          if (power.led_enabled == 1) {
             switch_lables[1].MaterialSwitch.on();
           } else {
             switch_lables[1].MaterialSwitch.off();
           }
-              if (power.total_switch_on == 1) {
+          if (power.total_switch_on == 1) {
             switch_lables[2].MaterialSwitch.on();
           } else {
             switch_lables[2].MaterialSwitch.off();
           }
+        }
         var status_arr = power.sockets.split(",");
         names_arr = power.socketNames.split(",");
         var switchTexts = document.querySelectorAll('.mdl-list__item-primary-content');
         $(".mdl-layout-title").text(power.deviceName);
         document.title=power.deviceName;
         for (var i = 0; i < status_arr.length; i++) {
-          //checkboxs[i].checked = status_arr[i] == "1";
           var langSpan = switchTexts[i+3].querySelector('.lang');
           var indexSpan = switchTexts[i+3].querySelector('.socket-index');
-          if (langSpan) langSpan.textContent = names_arr[i];   // 修改插座名称
-          if (indexSpan) indexSpan.textContent = ""; // 修改序号，可自定义起始数字
+          if (langSpan) langSpan.textContent = names_arr[i];
+          if (indexSpan) indexSpan.textContent = "";
+          if (UiApplyLocked()) continue;
           if (status_arr[i] == "1") {
             switch_lables[i+3].MaterialSwitch.on();
           } else {
@@ -1476,7 +1495,7 @@ componentHandler.upgradeDom();
             <td>" + BTN_OPERATIONS[tasks[i].operation].replaceAll('切换','设置') + "</td>\
             <td>" + ((tasks[i].operation==11||tasks[i].operation<8)?(tasks[i].on == 1?"开":"关"):"-") + "</td>\
             <td>" + getLoopText(tasks[i].weekday) + "</td>\
-            <td><a href='javascript:DelTimedTask(" + tasks[i].timestamp + ");'>删除</a></td>\
+            <td><a href='javascript:DelTimedTask(" + (tasks[i].id != null ? tasks[i].id : tasks[i].timestamp) + ");'>删除</a></td>\
           </tr>";
         }
         tb_html+="\
@@ -1607,11 +1626,15 @@ HttpPost("/shortClickEvent", function (re) {
       }, `${witch} ${index}`);
 }
 
-    function DelTimedTask(timestamp) {
-      HttpDel("/task/"+timestamp, function (re) {
-        ShowToast("Delete timed task OK!");
+    function DelTimedTask(id) {
+      HttpDel("/task/"+id, function (re) {
+        if (re == "OK") {
+          ShowToast("已删除定时任务");
+        } else {
+          ShowToast("删除失败: " + re);
+        }
         GetTimedTask();
-      }, timestamp);
+      });
     }
     //定时任务-end
 

@@ -13,7 +13,37 @@
 
 int day_sec = 86400;
 
-pTimedTask NewTask()
+/* 任务链表同时被主线程 ProcessTask 与 HTTP 线程读写，必须串行化。
+ * 互斥量非递归：所有 _nolock 内部函数只在已持锁时调用。 */
+static mico_mutex_t task_mutex;
+static bool task_mutex_ready = false;
+
+void TaskSubsysInit(void)
+{
+    if (task_mutex_ready) return;
+    if (mico_rtos_init_mutex(&task_mutex) == kNoErr) {
+        task_mutex_ready = true;
+    } else {
+        task_log("ERROR: task mutex init fail");
+    }
+}
+
+static void TaskLock(void)
+{
+    if (task_mutex_ready) mico_rtos_lock_mutex(&task_mutex);
+}
+
+static void TaskUnlock(void)
+{
+    if (task_mutex_ready) mico_rtos_unlock_mutex(&task_mutex);
+}
+
+static int TaskIndexOf(pTimedTask t)
+{
+    return (int) (t - &user_config->timed_tasks[0]);
+}
+
+static pTimedTask NewTask_nolock(void)
 {
     for (int i = 0; i < MAX_TASK_NUM; i++)
     {
@@ -21,13 +51,23 @@ pTimedTask NewTask()
         if (!task->on_use)
         {
             task->on_use = true;
+            task->next = NULL;
             return task;
         }
     }
     return NULL;
 }
 
-bool AddTaskSingle(pTimedTask task)
+pTimedTask NewTask()
+{
+    pTimedTask t;
+    TaskLock();
+    t = NewTask_nolock();
+    TaskUnlock();
+    return t;
+}
+
+static bool AddTaskSingle_nolock(pTimedTask task)
 {
     user_config->task_count++;
     if (user_config->task_top == NULL)
@@ -69,7 +109,7 @@ static bool WeekdayModeMatch(int mode, int day)
     return false;
 }
 
-bool AddTaskWeek(pTimedTask task)
+static bool AddTaskWeek_nolock(pTimedTask task)
 {
     time_t now = time(NULL);
     int today_weekday = (now / day_sec + 3) % 7 + 1; //1970-01-01 星期五
@@ -78,13 +118,12 @@ bool AddTaskWeek(pTimedTask task)
     int offset;
 
     if (task->weekday == 9 || task->weekday == 10) {
-        /* 工作日/周末：从今天起找最近一个匹配日的 hit_sec */
         for (offset = 0; offset < 7; offset++) {
             int day = ((today_weekday - 1 + offset) % 7) + 1;
             if (!WeekdayModeMatch(task->weekday, day)) continue;
             if (offset == 0 && hit_sec <= tod) continue;
             task->prs_time = (now - now % day_sec) + (offset * day_sec) + hit_sec;
-            return AddTaskSingle(task);
+            return AddTaskSingle_nolock(task);
         }
         return false;
     }
@@ -96,17 +135,27 @@ bool AddTaskWeek(pTimedTask task)
         task->prs_time = (now - now % day_sec) + (next_day * day_sec) + hit_sec;
     }
 
-    return AddTaskSingle(task);
+    return AddTaskSingle_nolock(task);
+}
+
+static bool AddTask_nolock(pTimedTask task)
+{
+    if (task->weekday == 0 || task->weekday == 8)
+        return AddTaskSingle_nolock(task);
+    return AddTaskWeek_nolock(task);
 }
 
 bool AddTask(pTimedTask task)
 {
-    if (task->weekday == 0 || task->weekday == 8)
-        return AddTaskSingle(task);
-    return AddTaskWeek(task);
+    bool ok;
+    TaskLock();
+    ok = AddTask_nolock(task);
+    if (ok) mico_system_context_update(sys_config);
+    TaskUnlock();
+    return ok;
 }
 
-bool DelFirstTask()
+static bool DelFirstTask_nolock(void)
 {
     if (user_config->task_top)
     {
@@ -116,66 +165,110 @@ bool DelFirstTask()
         if (tmp->weekday == 0)
         {
             tmp->on_use = false;
+            tmp->next = NULL;
         }
         else if (tmp->weekday == 8) //8代表每日任务
         {
             tmp->prs_time += day_sec;
-            AddTask(tmp);
+            AddTask_nolock(tmp);
         }
         else if (tmp->weekday == 9 || tmp->weekday == 10)
         {
-            /* 先 +1 天再由 AddTaskWeek 吸附到下一个工作日/周末 */
             tmp->prs_time += day_sec;
-            AddTask(tmp);
+            AddTask_nolock(tmp);
         }
         else
         {
             tmp->prs_time += 7 * day_sec;
-            AddTask(tmp);
+            AddTask_nolock(tmp);
         }
         return true;
     }
     return false;
+}
+
+bool DelFirstTask()
+{
+    bool ok;
+    TaskLock();
+    ok = DelFirstTask_nolock();
+    TaskUnlock();
+    return ok;
+}
+
+bool DelTaskById(int id)
+{
+    pTimedTask target, pre;
+
+    if (id < 0 || id >= MAX_TASK_NUM) return false;
+
+    TaskLock();
+    target = &user_config->timed_tasks[id];
+    if (!target->on_use) {
+        TaskUnlock();
+        return false;
+    }
+
+    if (user_config->task_top == target) {
+        user_config->task_top = target->next;
+    } else {
+        pre = user_config->task_top;
+        while (pre && pre->next != target) pre = pre->next;
+        if (pre == NULL) {
+            /* 槽位标了 on_use 但不在链表：当残留清理 */
+            target->on_use = false;
+            target->next = NULL;
+            TaskUnlock();
+            return false;
+        }
+        pre->next = target->next;
+    }
+    target->on_use = false;
+    target->next = NULL;
+    if (user_config->task_count > 0) user_config->task_count--;
+    mico_system_context_update(sys_config);
+    task_log("DelTaskById id=%d left=%d", id, user_config->task_count);
+    TaskUnlock();
+    return true;
 }
 
 bool DelTask(int time)
 {
-    if (user_config->task_top == NULL)
-    {
-        return false;
-    }
+    /* 兼容旧接口：按时间戳删（可能撞车，新前端请用 DelTaskById） */
+    int i;
+    bool ok = false;
 
-    if (time == user_config->task_top->prs_time)
-    {
-        pTimedTask tmp = user_config->task_top;
-        user_config->task_top = user_config->task_top->next;
-        tmp->on_use = false;
-        user_config->task_count--;
-        return true;
-    }
-    else if (user_config->task_top->next == NULL)
-    {
-        return false;
-    }
+    TaskLock();
+    for (i = 0; i < MAX_TASK_NUM; i++) {
+        pTimedTask t = &user_config->timed_tasks[i];
+        if (!t->on_use) continue;
+        if ((int) t->prs_time != time) continue;
 
-    pTimedTask pre_tsk = user_config->task_top;
-    pTimedTask tmp_tsk = user_config->task_top->next;
-    while (tmp_tsk)
-    {
-        if (time == tmp_tsk->prs_time)
-        {
-            pre_tsk->next = tmp_tsk->next;
-            tmp_tsk->on_use = false;
-            user_config->task_count--;
-            return true;
+        if (user_config->task_top == t) {
+            user_config->task_top = t->next;
+        } else {
+            pTimedTask pre = user_config->task_top;
+            while (pre && pre->next != t) pre = pre->next;
+            if (pre) pre->next = t->next;
         }
-        tmp_tsk = tmp_tsk->next;
+        t->on_use = false;
+        t->next = NULL;
+        if (user_config->task_count > 0) user_config->task_count--;
+        ok = true;
+        break;
     }
-    return false;
+    if (ok) mico_system_context_update(sys_config);
+    TaskUnlock();
+    return ok;
 }
 
 void ProcessTask()
 {
+    TaskLock();
+    if (user_config->task_top == NULL) {
+        TaskUnlock();
+        return;
+    }
     task_log("process task time[%ld] operation[%s] on[%d]",
         user_config->task_top->prs_time, get_func_name(user_config->task_top->operation), user_config->task_top->on);
     switch (user_config->task_top->operation) {
@@ -199,7 +292,6 @@ void ProcessTask()
                 mico_system_context_update(sys_config);
                 break;
             case SWITCH_LED_ENABLE:
-
                 if (RelayOut() && user_config->task_top->on) {
                     UserLedSet(1);
                 } else {
@@ -218,12 +310,10 @@ void ProcessTask()
                 MicoSystemReboot();
                 break;
             case CONFIG_WIFI:
-
                 micoWlanSuspendStation();
                 ApInit(true);
                 break;
             case RESET_SYSTEM:
-
                 mico_system_context_restore(sys_config);
                 mico_rtos_thread_sleep(1);
                 MicoSystemReboot();
@@ -231,26 +321,30 @@ void ProcessTask()
             default:
                 break;
         }
-    DelFirstTask();
+    DelFirstTask_nolock();
+    mico_system_context_update(sys_config);
+    TaskUnlock();
 }
 
 char* GetTaskStr()
 {
-    int count = user_config->task_count;
+    int count;
     size_t alloc;
     char* str;
     pTimedTask tmp_tsk;
     char* tmp_str;
 
-    /* 原来按 task_count*89+2 分配，但 count==0 时只有 2 字节，
-     * 而代码固定写 tmp_str[2] = 0，直接越界写堆；
-     * 单条记录最坏也超过 89 字节。这里改成按 MAX_TASK_NUM 上限分配并判空。 */
+    TaskLock();
+    count = user_config->task_count;
     if (count < 0) count = 0;
     if (count > MAX_TASK_NUM) count = MAX_TASK_NUM;
 
-    alloc = (size_t) count * 128 + 4;
+    /* 每条约 100B + id 字段；按上限 128 分配并判空 */
+    alloc = (size_t) count * 140 + 4;
+    if (alloc < 16) alloc = 16;
     str = (char*) malloc(alloc);
     if (str == NULL) {
+        TaskUnlock();
         str = (char*) malloc(4);
         if (str) { str[0] = '['; str[1] = ']'; str[2] = 0; }
         return str;
@@ -268,20 +362,22 @@ char* GetTaskStr()
         struct tm tm_info;
         time_t prs_time = tmp_tsk->prs_time + 28800;
         int n;
+        int id = TaskIndexOf(tmp_tsk);
 
         if (localtime_r(&prs_time, &tm_info) == NULL)
             memset(&tm_info, 0, sizeof(tm_info));
         strftime(buffer, sizeof(buffer), "%m-%d %H:%M", &tm_info);
 
         n = snprintf(tmp_str, (size_t) (alloc - (size_t) (tmp_str - str)),
-            "{'timestamp':%ld,'prs_time':'%s','operation':%d,'on':%d,'weekday':%d},",
-            (long) tmp_tsk->prs_time, buffer, tmp_tsk->operation, tmp_tsk->on, tmp_tsk->weekday);
+            "{'id':%d,'timestamp':%ld,'prs_time':'%s','operation':%d,'on':%d,'weekday':%d},",
+            id, (long) tmp_tsk->prs_time, buffer, tmp_tsk->operation, tmp_tsk->on, tmp_tsk->weekday);
         if (n < 0 || (size_t) n >= (size_t) (alloc - (size_t) (tmp_str - str))) break;
         tmp_str += n;
         tmp_tsk = tmp_tsk->next;
     }
-    if (tmp_str > str + 1) --tmp_str;   /* 覆盖末尾逗号 */
+    if (tmp_str > str + 1) --tmp_str;
     *tmp_str = ']';
     *(tmp_str + 1) = 0;
+    TaskUnlock();
     return str;
 }
